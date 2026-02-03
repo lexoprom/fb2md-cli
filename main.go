@@ -104,6 +104,20 @@ Flags:
 func convertFile(input, output string, extractImages bool, imagesDir string) error {
 	ext := strings.ToLower(filepath.Ext(input))
 
+	outDir := filepath.Dir(output)
+	if outDir != "." {
+		info, err := os.Stat(outDir)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return fmt.Errorf("output directory does not exist: %s", outDir)
+			}
+			return fmt.Errorf("cannot access output directory %s: %w", outDir, err)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("output directory is not a directory: %s", outDir)
+		}
+	}
+
 	switch ext {
 	case ".fb2":
 		converter := NewConverter()

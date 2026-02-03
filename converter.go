@@ -15,6 +15,7 @@ type Converter struct {
 	doc           *etree.Document
 	output        *strings.Builder
 	outputMain    strings.Builder
+	outputFile    string
 	sectionLevel  int
 	extractImages bool
 	imagesDir     string
@@ -24,6 +25,30 @@ type Converter struct {
 	footnotes     map[string]string
 	footnoteSeen  map[string]bool
 	footnoteOrder []string
+}
+
+func (c *Converter) markdownPathFromOutputDir(targetPath string) string {
+	if targetPath == "" {
+		return ""
+	}
+	if c.outputFile == "" {
+		return filepath.ToSlash(targetPath)
+	}
+
+	outputDir, err := filepath.Abs(filepath.Dir(c.outputFile))
+	if err != nil {
+		return filepath.ToSlash(targetPath)
+	}
+	targetAbs, err := filepath.Abs(targetPath)
+	if err != nil {
+		return filepath.ToSlash(targetPath)
+	}
+
+	rel, err := filepath.Rel(outputDir, targetAbs)
+	if err != nil {
+		return filepath.ToSlash(targetPath)
+	}
+	return filepath.ToSlash(rel)
 }
 
 func stripBase64Whitespace(s string) string {
@@ -90,6 +115,7 @@ func NewConverter() *Converter {
 func (c *Converter) Convert(inputFile, outputFile string, extractImages bool, imagesDir string) error {
 	c.extractImages = extractImages
 	c.imagesDir = imagesDir
+	c.outputFile = outputFile
 
 	// Read file as bytes for encoding detection
 	data, err := os.ReadFile(inputFile)
@@ -835,7 +861,7 @@ func (c *Converter) processImage(img *etree.Element) {
 				}
 			}
 			imagePath := filepath.Join(c.imagesDir, filename)
-			c.output.WriteString(fmt.Sprintf("![%s](%s)", imageID, filepath.ToSlash(imagePath)))
+			c.output.WriteString(fmt.Sprintf("![%s](%s)", imageID, c.markdownPathFromOutputDir(imagePath)))
 		} else {
 			c.output.WriteString(fmt.Sprintf("![Image: %s]", imageID))
 		}

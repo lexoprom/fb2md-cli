@@ -223,8 +223,13 @@ func (e *EpubConverter) renderBlock(elem *etree.Element, output *strings.Builder
 		output.WriteString("\n\n")
 	case "blockquote":
 		var inner strings.Builder
+		appendInlineText(&inner, normalizeInlineWhitespace(elem.Text(), false, true))
+		if strings.TrimSpace(inner.String()) != "" && len(elem.ChildElements()) > 0 {
+			inner.WriteString("\n")
+		}
 		for _, child := range elem.ChildElements() {
 			e.renderInline(child, &inner)
+			appendInlineText(&inner, normalizeInlineWhitespace(child.Tail(), true, true))
 			inner.WriteString("\n")
 		}
 		lines := strings.Split(strings.TrimSpace(inner.String()), "\n")
