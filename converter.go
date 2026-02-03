@@ -12,11 +12,13 @@ import (
 
 type Converter struct {
 	doc           *etree.Document
-	output        strings.Builder
+	output        *strings.Builder
+	outputMain    strings.Builder
 	sectionLevel  int
 	extractImages bool
 	imagesDir     string
 	imageCounter  int
+	imageFiles    map[string]string
 	// Footnotes: map from note ID to note text
 	footnotes     map[string]string
 	footnoteSeen  map[string]bool
@@ -24,10 +26,13 @@ type Converter struct {
 }
 
 func NewConverter() *Converter {
-	return &Converter{
+	c := &Converter{
 		footnotes:    make(map[string]string),
 		footnoteSeen: make(map[string]bool),
+		imageFiles:   make(map[string]string),
 	}
+	c.output = &c.outputMain
+	return c
 }
 
 func (c *Converter) Convert(inputFile, outputFile string, extractImages bool, imagesDir string) error {
@@ -64,6 +69,11 @@ func (c *Converter) Convert(inputFile, outputFile string, extractImages bool, im
 	root := doc.SelectElement("FictionBook")
 	if root == nil {
 		return fmt.Errorf("invalid FB2 file: FictionBook element not found")
+	}
+
+	// Collect image filenames before rendering so Markdown links match written files.
+	if c.extractImages {
+		c.collectBinaryImageFilenames(root)
 	}
 
 	// First pass: collect footnotes from notes bodies
@@ -129,7 +139,7 @@ func (c *Converter) collectFootnotes(elem *etree.Element) {
 				}
 			case "section":
 				// Nested sections inside a note — recurse
-				c.collectFootnotes(section)
+				c.collectFootnotes(child)
 			default:
 				text := c.extractAllText(child)
 				if text != "" {
@@ -681,9 +691,9 @@ func (c *Converter) processInlineElement(elem *etree.Element) {
 func (c *Converter) extractInlineText(elem *etree.Element) string {
 	var buf strings.Builder
 	old := c.output
-	c.output = buf
+	c.output = &buf
 	c.processInlineElement(elem)
-	result := c.output.String()
+	result := buf.String()
 	c.output = old
 	return result
 }
@@ -752,7 +762,11 @@ func (c *Converter) processImage(img *etree.Element) {
 		imageID := strings.TrimPrefix(href, "#")
 
 		if c.extractImages {
-			imagePath := filepath.Join(c.imagesDir, imageID)
+			filename := imageID
+			if v, ok := c.imageFiles[imageID]; ok && v != "" {
+				filename = v
+			}
+			imagePath := filepath.Join(c.imagesDir, filename)
 			c.output.WriteString(fmt.Sprintf("![%s](%s)", imageID, imagePath))
 		} else {
 			c.output.WriteString(fmt.Sprintf("![Image: %s]", imageID))
@@ -780,6 +794,38 @@ func (c *Converter) extractBinaryImages(root *etree.Element) error {
 			continue
 		}
 
+		filename := c.imageFiles[id]
+		if filename == "" {
+			ext := ".jpg"
+			if strings.Contains(contentType, "png") {
+				ext = ".png"
+			} else if strings.Contains(contentType, "gif") {
+				ext = ".gif"
+			}
+			filename = id
+			if !strings.HasSuffix(filename, ext) {
+				filename = filename + ext
+			}
+		}
+
+		imagePath := filepath.Join(c.imagesDir, filename)
+		if err := os.WriteFile(imagePath, decoded, 0644); err != nil {
+			fmt.Printf("warning: failed to write image %s: %v\n", id, err)
+			continue
+		}
+	}
+
+	return nil
+}
+
+func (c *Converter) collectBinaryImageFilenames(root *etree.Element) {
+	for _, binary := range root.SelectElements("binary") {
+		id := binary.SelectAttrValue("id", "")
+		contentType := binary.SelectAttrValue("content-type", "image/jpeg")
+		if id == "" {
+			continue
+		}
+
 		ext := ".jpg"
 		if strings.Contains(contentType, "png") {
 			ext = ".png"
@@ -791,13 +837,6 @@ func (c *Converter) extractBinaryImages(root *etree.Element) error {
 		if !strings.HasSuffix(filename, ext) {
 			filename = filename + ext
 		}
-
-		imagePath := filepath.Join(c.imagesDir, filename)
-		if err := os.WriteFile(imagePath, decoded, 0644); err != nil {
-			fmt.Printf("warning: failed to write image %s: %v\n", id, err)
-			continue
-		}
+		c.imageFiles[id] = filename
 	}
-
-	return nil
 }

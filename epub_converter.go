@@ -7,6 +7,7 @@ import (
 	"os"
 	"path"
 	"strings"
+	"unicode"
 
 	"github.com/beevik/etree"
 )
@@ -56,7 +57,7 @@ func (e *EpubConverter) Convert(inputFile, outputFile string) error {
 			// fmt.Printf("Warning: empty markdown for %s\n", docPath)
 			continue
 		}
-		
+
 		// fmt.Printf("Successfully converted %s (%d bytes)\n", docPath, len(markdown))
 
 		output.WriteString(markdown)
@@ -170,7 +171,7 @@ func (e *EpubConverter) xhtmlToMarkdown(content []byte) string {
 	// Replace incompatible entities
 	contentStr := string(content)
 	contentStr = strings.ReplaceAll(contentStr, "&nbsp;", "&#160;")
-	
+
 	doc := etree.NewDocument()
 	if err := doc.ReadFromString(contentStr); err != nil {
 		fmt.Printf("Error parsing XML: %v\n", err)
@@ -270,9 +271,7 @@ func (e *EpubConverter) renderList(list *etree.Element, output *strings.Builder,
 }
 
 func (e *EpubConverter) renderInline(elem *etree.Element, output *strings.Builder) {
-	if text := strings.TrimSpace(elem.Text()); text != "" {
-		output.WriteString(text)
-	}
+	appendInlineText(output, normalizeInlineWhitespace(elem.Text(), false, true))
 
 	for _, child := range elem.ChildElements() {
 		switch strings.ToLower(child.Tag) {
@@ -310,10 +309,7 @@ func (e *EpubConverter) renderInline(elem *etree.Element, output *strings.Builde
 			e.renderInline(child, output)
 		}
 
-		if tail := strings.TrimSpace(child.Tail()); tail != "" {
-			output.WriteString(" ")
-			output.WriteString(tail)
-		}
+		appendInlineText(output, normalizeInlineWhitespace(child.Tail(), true, true))
 	}
 }
 
@@ -332,4 +328,56 @@ func (e *EpubConverter) extractText(elem *etree.Element) string {
 	}
 
 	return strings.TrimSpace(text.String())
+}
+
+func normalizeInlineWhitespace(s string, preserveLeading, preserveTrailing bool) string {
+	if s == "" {
+		return ""
+	}
+
+	hasLeading := preserveLeading && strings.TrimLeftFunc(s, unicode.IsSpace) != s
+	hasTrailing := preserveTrailing && strings.TrimRightFunc(s, unicode.IsSpace) != s
+
+	trimmed := strings.TrimSpace(s)
+	if trimmed == "" {
+		if hasLeading || hasTrailing {
+			return " "
+		}
+		return ""
+	}
+
+	collapsed := strings.Join(strings.Fields(trimmed), " ")
+	if hasLeading {
+		collapsed = " " + collapsed
+	}
+	if hasTrailing {
+		collapsed += " "
+	}
+	return collapsed
+}
+
+func appendInlineText(output *strings.Builder, s string) {
+	if s == "" {
+		return
+	}
+
+	if output.Len() == 0 {
+		if strings.TrimSpace(s) == "" {
+			return
+		}
+		s = strings.TrimLeft(s, " ")
+	} else if strings.HasPrefix(s, " ") {
+		outStr := output.String()
+		if len(outStr) > 0 {
+			last := outStr[len(outStr)-1]
+			if last == ' ' || last == '\n' {
+				s = strings.TrimLeft(s, " ")
+				if s == "" {
+					return
+				}
+			}
+		}
+	}
+
+	output.WriteString(s)
 }
