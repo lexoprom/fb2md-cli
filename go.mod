@@ -1,4 +1,4 @@
-module fb2md
+module github.com/lexoprom/fb2md-cli
 
 go 1.24.0
 
