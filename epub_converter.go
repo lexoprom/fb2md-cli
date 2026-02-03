@@ -48,7 +48,7 @@ func (e *EpubConverter) Convert(inputFile, outputFile string) error {
 	for _, docPath := range spineDocs {
 		content, err := e.readFile(docPath)
 		if err != nil {
-			fmt.Printf("Warning: failed to read %s: %v\n", docPath, err)
+			fmt.Fprintf(os.Stderr, "warning: failed to read %s: %v\n", docPath, err)
 			continue
 		}
 
@@ -143,7 +143,6 @@ func (e *EpubConverter) getSpineDocuments(rootFile string) ([]string, error) {
 		return nil, fmt.Errorf("no spine documents found in EPUB")
 	}
 
-	fmt.Printf("Found %d spine documents\n", len(docs))
 	return docs, nil
 }
 
@@ -174,7 +173,7 @@ func (e *EpubConverter) xhtmlToMarkdown(content []byte) string {
 
 	doc := etree.NewDocument()
 	if err := doc.ReadFromString(contentStr); err != nil {
-		fmt.Printf("Error parsing XML: %v\n", err)
+		fmt.Fprintf(os.Stderr, "warning: failed to parse XHTML: %v\n", err)
 		return ""
 	}
 

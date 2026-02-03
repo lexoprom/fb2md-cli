@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -23,6 +24,57 @@ type Converter struct {
 	footnotes     map[string]string
 	footnoteSeen  map[string]bool
 	footnoteOrder []string
+}
+
+func stripBase64Whitespace(s string) string {
+	if s == "" {
+		return ""
+	}
+
+	out := make([]byte, 0, len(s))
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case ' ', '\n', '\r', '\t':
+			continue
+		default:
+			out = append(out, s[i])
+		}
+	}
+	return string(out)
+}
+
+func sanitizeFilename(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+
+	// Normalize separators and strip any path components.
+	name = strings.ReplaceAll(name, "\\", "/")
+	name = path.Base(name)
+
+	var b strings.Builder
+	b.Grow(len(name))
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r)
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == '.' || r == '_' || r == '-':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+
+	out := strings.Trim(b.String(), "._-")
+	if out == "" || out == "." || out == ".." {
+		return ""
+	}
+	return out
 }
 
 func NewConverter() *Converter {
@@ -267,22 +319,34 @@ func (c *Converter) getAuthorName(author *etree.Element) string {
 }
 
 func (c *Converter) processBody(body *etree.Element) {
-	// Process body title if present
-	if title := body.SelectElement("title"); title != nil {
-		c.output.WriteString("\n## ")
-		titleText := c.extractAllText(title)
-		c.output.WriteString(titleText)
-		c.output.WriteString("\n\n")
-	}
-
-	// Process epigraphs
-	for _, epigraph := range body.SelectElements("epigraph") {
-		c.processEpigraph(epigraph)
-	}
-
-	// Process all sections
-	for _, section := range body.SelectElements("section") {
-		c.processSection(section)
+	for _, child := range body.ChildElements() {
+		switch child.Tag {
+		case "title":
+			c.output.WriteString("\n## ")
+			titleText := c.extractAllText(child)
+			c.output.WriteString(titleText)
+			c.output.WriteString("\n\n")
+		case "epigraph":
+			c.processEpigraph(child)
+		case "section":
+			c.processSection(child)
+		case "p":
+			c.processParagraph(child)
+		case "subtitle":
+			c.processSubtitle(child)
+		case "empty-line":
+			c.output.WriteString("\n")
+		case "image":
+			c.processImage(child)
+		case "poem":
+			c.processPoem(child)
+		case "cite":
+			c.processCite(child)
+		case "table":
+			c.processTable(child)
+		default:
+			c.processBlockContent(child)
+		}
 	}
 }
 
@@ -765,9 +829,13 @@ func (c *Converter) processImage(img *etree.Element) {
 			filename := imageID
 			if v, ok := c.imageFiles[imageID]; ok && v != "" {
 				filename = v
+			} else {
+				if safe := sanitizeFilename(imageID); safe != "" {
+					filename = safe
+				}
 			}
 			imagePath := filepath.Join(c.imagesDir, filename)
-			c.output.WriteString(fmt.Sprintf("![%s](%s)", imageID, imagePath))
+			c.output.WriteString(fmt.Sprintf("![%s](%s)", imageID, filepath.ToSlash(imagePath)))
 		} else {
 			c.output.WriteString(fmt.Sprintf("![Image: %s]", imageID))
 		}
@@ -786,11 +854,11 @@ func (c *Converter) extractBinaryImages(root *etree.Element) error {
 			continue
 		}
 
-		imageData := strings.TrimSpace(binary.Text())
+		imageData := stripBase64Whitespace(strings.TrimSpace(binary.Text()))
 
 		decoded, err := base64.StdEncoding.DecodeString(imageData)
 		if err != nil {
-			fmt.Printf("warning: failed to decode image %s: %v\n", id, err)
+			fmt.Fprintf(os.Stderr, "warning: failed to decode image %s: %v\n", id, err)
 			continue
 		}
 
@@ -810,7 +878,7 @@ func (c *Converter) extractBinaryImages(root *etree.Element) error {
 
 		imagePath := filepath.Join(c.imagesDir, filename)
 		if err := os.WriteFile(imagePath, decoded, 0644); err != nil {
-			fmt.Printf("warning: failed to write image %s: %v\n", id, err)
+			fmt.Fprintf(os.Stderr, "warning: failed to write image %s: %v\n", id, err)
 			continue
 		}
 	}
@@ -819,6 +887,7 @@ func (c *Converter) extractBinaryImages(root *etree.Element) error {
 }
 
 func (c *Converter) collectBinaryImageFilenames(root *etree.Element) {
+	used := make(map[string]bool)
 	for _, binary := range root.SelectElements("binary") {
 		id := binary.SelectAttrValue("id", "")
 		contentType := binary.SelectAttrValue("content-type", "image/jpeg")
@@ -833,10 +902,27 @@ func (c *Converter) collectBinaryImageFilenames(root *etree.Element) {
 			ext = ".gif"
 		}
 
-		filename := id
-		if !strings.HasSuffix(filename, ext) {
-			filename = filename + ext
+		base := sanitizeFilename(id)
+		if base == "" {
+			base = "image"
 		}
+
+		filename := base
+		if !strings.HasSuffix(strings.ToLower(filename), ext) {
+			filename += ext
+		}
+
+		if used[filename] {
+			for n := 2; ; n++ {
+				alt := fmt.Sprintf("%s_%d%s", base, n, ext)
+				if !used[alt] {
+					filename = alt
+					break
+				}
+			}
+		}
+
+		used[filename] = true
 		c.imageFiles[id] = filename
 	}
 }
