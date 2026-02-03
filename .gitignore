@@ -1,0 +1,5 @@
+fb2md
+*.md
+!README.md
+!docs/*.md
+testdata/
